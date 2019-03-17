@@ -87,16 +87,16 @@ The model function, \verb|RCF\_Anomly\_Model\_2.py| is then invoked with the nee
 And as a result of some time consuming calculations in this function, we had to make the run-time of lambda up to 3 minutes to avoid any unwanted failures.\\
 After the json event is received, we parse it back to the correct csv format and send it to the model using \verb|invoke\_endpoint| method. The result is a huge CSV response with all the values we need to calculate with RCF for anomalies.\\
 The final cut-off score is calculated with the following equations:
-\begin{figure}[h]
+\begin{figure}[h!]
     \centering
-    \includegraphics[width=1\textwidth]{images/cutt-off-calculator.png}
+    \includegraphics[width=0.8\textwidth]{images/cutt-off-calculator.png}
     \caption{Cut-off score calculator}
     \label{fig:cut_off_calculator}
 \end{figure}
 Based on the calculated RCF Threshold we compare the values based on the input data and mark those over the threshold level as an anomalies. Once anomaly is detected notification process starts.\\
-\begin{figure}[ht]
+\begin{figure}[h!]
     \centering
-    \includegraphics[width=1\textwidth]{images/cutt-off-comparison.png}
+    \includegraphics[width=0.8\textwidth]{images/cutt-off-comparison.png}
     \caption{Cut-off comparison}
     \label{fig:cut_off_comparison}
 \end{figure}
@@ -105,9 +105,9 @@ Once we have everything calculated and compared, the results are sent to another
 The graph generation was a bit of a complicated manner, since we can’t send direct images from lambda to slack without doing a workaround. We had to store the results in a memory buffer, and read that buffer to send it. Notifications being sent had the anomalies, a graph with the data + threshold + anomalies detected in a detailed form.\\
 
 Using panda, we saved data points in an X (\textbf{Date Stamp}) and Y (\textbf{Scores}) lists after reading the file from lambda’s tmp directory and generate the plot.
-\begin{figure}[h]
+\begin{figure}[h!]
     \centering
-    \includegraphics[width=1\textwidth]{images/graph-plotting.png}
+    \includegraphics[width=0.8\textwidth]{images/graph-plotting.png}
     \caption{Plotting the anomaly graph}
     \label{fig:graph_plotting}
 \end{figure}

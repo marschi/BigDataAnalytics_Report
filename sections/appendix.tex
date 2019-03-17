@@ -1,0 +1,253 @@
+\chapter{Real-time Anomaly Detection in VPC Flow Logs (in AWS)} \label{appendix-medium}
+
+\section{Introduction}
+Credit goes to Igor Kantor (\scriptsize{\url{https://medium.com/@devfire}}) who wrote the original post (5 parts) on Medium:
+
+The goal of this GitHubGist is to support anyone who wants to implement the described architecture and get it running on AWS.
+This means you should use both the Medium Post and this GitHubGist for the implementation (since I will not repeat all the text here).
+
+On my aws account I used a prefix (medium) for all services, to easily find them amongst all the other running services/instance/funtions/roles etc. (just as a suggestion). It will make cleaning up your aws account easier later on.
+
+
+In this GitHubGist we will focus on the anomaly detection ("components within the red dashes"):
+
+
+\section{Part 1}
+\scriptsize{\url{https://medium.com/@devfire/real-time-anomaly-detection-in-vpc-flow-logs-part-1-introduction-55ed000e039b}}
+
+Just introduction text. Does not contain any code or implementation.
+
+
+\section{Part 2}
+\scriptsize{\url{https://medium.com/@devfire/real-time-anomaly-detection-in-vpc-flow-logs-part-2-proposed-architecture-32683755abf7}}
+
+Gives an overview of the architecture.
+
+In this GitHubGist we will focus on the anomaly detection ("components within the red dashes").
+
+
+\section{Part 3}
+\scriptsize{\url{https://medium.com/@devfire/real-time-anomaly-detection-in-vpc-flow-logs-part-3-kinesis-stream-1bdd8a9426f1}}
+
+This is where the fun begins. 
+
+Make sure you have the AWS Command Line Interface installed (\scriptsize{\url{https://docs.aws.amazon.com/de_de/cli/latest/userguide/cli-install-macos.html}}). 
+
+If you just installed the aws cli, make sure you run \begin{lstlisting}[numbers=none]
+aws configure
+\end{lstlisting} 
+to connect it to your aws account. 
+
+Let's get started (with the article):
+
+\begin{lstlisting}[numbers=none]
+aws kinesis create-stream --stream-name "VPCFlowLogs" --shard-count 1\end{lstlisting}
+
+\begin{lstlisting}[numbers=none]
+vim allowCloudWatchAccesstoKinesis.json
+\end{lstlisting}
+
+Paste the content and substitute your region as needed (in line:  "Principal": { "Service": "logs.\textbf{us-east-1}.amazonaws.com" }, ).
+
+Run the following command \textbf{from the same directory} where \textbf{allowCloudWatchAccesstoKinesis.json} is located:
+
+\begin{lstlisting}[numbers=none]
+aws iam create-role --role-name CloudWatchToKinesisRole --assume-role-policy-document file://./allowCloudWatchAccesstoKinesis.json
+\end{lstlisting}
+
+\begin{lstlisting}[numbers=none]
+vim cloudWatchPermissions.json
+\end{lstlisting}
+
+
+Paste the content and \textbf{substitute the two resource arn strings} with yours.
+
+Run the following command \textbf{from the same directory} where \textbf{cloudWatchPermissions.json} is located:
+
+\begin{lstlisting}[numbers=none]
+aws iam put-role-policy --role-name CloudWatchToKinesisRole --policy-name Permissions-Policy-For-CWL --policy-document file://./cloudWatchPermissions.json
+\end{lstlisting}
+
+
+\begin{lstlisting}[language=bash,numbers=left,stepnumber=1,breaklines=true]
+aws logs put-subscription-filter \
+    --log-group-name "VPCFlowLogs" \
+    --filter-name "VPCFlowLogsAllFilter" \
+    --filter-pattern "[version, account_id, interface_id, srcaddr != "-", dstaddr != "-", srcport != "-", dstport != "-", protocol, packets, bytes, start, end, action, log_status]" \
+    --destination-arn "arn:aws:kinesis:us-east-1:31415926:stream/VPCFlowLogs" \
+    --role-arn "arn:aws:iam::31415926:role/CloudWatchToKinesisRole"
+
+\end{lstlisting}
+
+\begin{lstlisting}[numbers=none]
+brew install jq
+\end{lstlisting}
+
+\begin{lstlisting}[numbers=none]
+aws kinesis get-records --limit 10 --shard-iterator $(aws kinesis get-shard-iterator --stream-name medium_VPCFlowLogs --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON | jq -r ."ShardIterator") | jq -r .Records[].Data | base64 -d | zcat
+\end{lstlisting}
+
+In my case 
+\begin{lstlisting}[numbers=none]
+aws kinesis get-records --limit 10 --shard-iterator $(aws kinesis get-shard-iterator --stream-name medium_VPCFlowLogs --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON | jq -r ."ShardIterator")
+\end{lstlisting}
+gives me the following:
+\begin{lstlisting}[numbers=none, basicstyle=\tinysize]
+{
+    "Records": [],
+    "NextShardIterator": "AAAAAAAAAAF3vrrgukNNTm4aHO8iRO5DXESr+ofQJFH57eXltrr1DTJW1DExKKckOxU5ZT2nFoQ2FOJsmfscXDRl9po0Q9Jb1Zvs9aytKcMLldmE6P7o/HZSC5uhlpT3/tFVAAMQAvqZ41MIFJqFik/kShb9q9oEB3WbYTrigihimcr1haixhIdQv2J6TJhJ6dZ1l6ggsVcnjbok1NZzIyzeABkS8fhLKSsJ/qIV+WmNigYX0MSYVA==",
+    "MillisBehindLatest": 31385000
+}
+\end{lstlisting}
+
+so when appending the 
+\begin{lstlisting}[numbers=none]
+| jq -r .Records[].Data | base64 -d | zcat
+\end{lstlisting}
+part to that command it gives me "no matches found: .Records[].Data". So I still have to figure out how to insert records here (probably just need to put traffic on the vpc).
+
+
+\section{Part 4}
+\scriptsize{\url{https://medium.com/@devfire/real-time-anomaly-detection-in-vpc-flow-logs-part-4-kinesis-analytics-c80cc4977e97}}
+
+
+Navigate to the Kinesis Analytics page in the AWS console and click on Create Application.\\
+\hspace*{1cm} Name it VPCFlowLogsAnalytics.\\
+\hspace*{1cm} Hook it up to the VPCFlowLogs Kinesis stream you created earlier.\\
+\hspace*{1cm} \textit{in case you can not create the application because you don't have enough\\
+\hspace*{1cm} data see section \textbf{Amazon Kinesis Data Generator} on the bottom of this file.}\\
+\hspace*{1cm} Enable Lambda pre-processing and say you want a new Lambda function. \\
+\hspace*{2cm} Use blueprint \textbf{kinesis-analytics-process-compressed-record} for the lambda function\\
+\hspace*{2cm} Name the lambda function \textit{KinesisAnalyticsProcessCompressedRecord}\\
+\hspace*{2cm} Create in IAM a \textbf{lambda\textunderscore kinesis\textunderscore exec\textunderscore role} and give it AmazonKinesisFullAccess.\\
+\hspace*{2cm} Assign  \textbf{lambda\textunderscore kinesis\textunderscore exec\textunderscore role} for your lambda function (\textit{KinesisAnalyticsProcessCompressedRecord}).\\
+\hspace*{2cm} Increase the Timeout setting to at least 1 minute\\
+\hspace*{1cm}Click on Discover Schema\\
+\\
+In my case the schema was not recognized and I had to manually create all the columns:
+
+
+I had to rename the columns \textbf{start} and \textbf{end} (see error message in screenshot).
+Here are the column names: 
+
+\begin{lstlisting}[numbers=none]
+version, account_id, interface_id, srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes, start_, end_, action, log_status
+\end{lstlisting}
+
+I recommend to create them in reverse order (log\textunderscore status first, version last) so you dont have to sort manually.
+
+
+\section{Part 5}
+\scriptsize{\url{https://medium.com/@devfire/real-time-anomaly-detection-in-vpc-flow-logs-part-4-kinesis-analytics-c80cc4977e97}}
+
+We are still where we left in part 4 (create Kinesis Analytics Application):
+
+        Click on the blue \textbf{Go to SQL Editor} button.
+
+\begin{lstlisting}[language=sql]
+-- \textbf{ Anomaly detection \textbf{
+-- Compute an anomaly score for each record in the source stream using Random Cut Forest
+-- Creates a temporary stream and defines a schema
+CREATE OR REPLACE STREAM "TEMP_STREAM" (
+--   "APPROXIMATE_ARRIVAL_TIME"     timestamp,
+--   "srcaddr"     varchar(16),
+--   "dstaddr"   varchar(16),
+   "bytes"        DOUBLE,
+   "ANOMALY_SCORE"  DOUBLE,
+   "ANOMALY_EXPLANATION"  varchar(512));
+   
+-- Creates an output stream and defines a schema
+CREATE OR REPLACE STREAM "DESTINATION_SQL_STREAM" (
+--   "APPROXIMATE_ARRIVAL_TIME"     timestamp,
+ --  "srcaddr"     varchar(16),
+--   "dstaddr"   varchar(16),
+   "bytes"        DOUBLE,
+   "ANOMALY_SCORE"  DOUBLE,
+   "ANOMALY_EXPLANATION"  varchar(512));
+ 
+-- Compute an anomaly score for each record in the source stream
+-- using Random Cut Forest
+CREATE OR REPLACE PUMP "STREAM_PUMP" AS INSERT INTO "TEMP_STREAM"
+--  SELECT STREAM "APPROXIMATE_ARRIVAL_TIME", "srcaddr", "dstaddr", "bytes", "ANOMALY_SCORE", "ANOMALY_EXPLANATION"
+-- SELECT STREAM "srcaddr", "dstaddr", "bytes", "ANOMALY_SCORE", "ANOMALY_EXPLANATION"
+  SELECT STREAM "bytes", "ANOMALY_SCORE", "ANOMALY_EXPLANATION" 
+  FROM TABLE(RANDOM_CUT_FOREST_WITH_EXPLANATION(
+    CURSOR(SELECT STREAM "bytes" FROM "SOURCE_SQL_STREAM_001"), 100, 256, 100000, 1, true
+  )
+);
+-- Sort records by descending anomaly score, insert into output stream
+CREATE OR REPLACE PUMP "OUTPUT_PUMP" AS INSERT INTO "DESTINATION_SQL_STREAM"
+SELECT STREAM * FROM "TEMP_STREAM"
+--WHERE ANOMALY_SCORE > 3.0
+ORDER BY FLOOR("TEMP_STREAM".ROWTIME TO SECOND), ANOMALY_SCORE DESC;
+\end{lstlisting}
+
+(It is mentioned that credits go to Curtis Mitchell: \scriptsize{\url{https://medium.com/@curtis_mitchell}})
+
+To understand where the anomaly detection happens see:\\ \scriptsize{\url{https://docs.aws.amazon.com/kinesisanalytics/latest/sqlref/sqlrf-random-cut-forest-with-explanation.html}}
+
+\textbf{The following part is not from the Medium article, but was added for clarification}
+
+
+\section{Part 5 continued}
+
+Create new lambda function using the blueprint \textbf{kinesis-analytics-output}
+
+Name the lambda function \textbf{kinesis\textunderscore analytics\textunderscore destination}
+
+Open your \textit{VPCFlowLogsAnalytics} in \textit{Kinesis Analytics applications}
+
+Click \textbf{Connect new destination} button
+
+Choose \textit{AWS Lambda function} as destination and select \textbf{kinesis\textunderscore analytics\textunderscore destination}
+
+As \textit{In-application stream name} choose \textbf{DESTINATION\textunderscore SQL\textunderscore STREAM}
+
+Click \textbf{Save and continue}
+
+\section{Amazon Kinesis Data Generator (used for part 4)}
+To supply the Kinesis Stream with data I had to set up an \textbf{Amazon Kinesis Data Generator} first.
+
+Open the page \scriptsize{\url{https://awslabs.github.io/amazon-kinesis-data-generator/web/help.html.}}
+
+Download the CloudFormation template \scriptsize{\url{https://s3-us-west-2.amazonaws.com/kinesis-helpers/cognito-setup.json}}
+
+
+Click the blue \textbf{Create a Cognito User with CloudFormation} button (on the \scriptsize{\url{https://awslabs.github.io/amazon-kinesis-data-generator/web/help.html}}).
+
+You are redirected to aws console. 
+
+Choose \textbf{Upload a template to Amazon S3} and choose the \textbf{cognito-setup.json} which you downloaded before.
+
+Click the \textbf{next} button (bottom right).
+
+Read the rest of the \scriptsize{\url{https://awslabs.github.io/amazon-kinesis-data-generator/web/help.html}} to learn how to access and use the Amazon Kinesis Data Generator.
+
+\section{allowCloudWatchAccesstoKinesis.json}
+\begin{lstlisting}[language=json]
+{
+  "Statement": {
+    "Effect": "Allow",
+    "Principal": { "Service": "logs.us-east-1.amazonaws.com" },
+    "Action": "sts:AssumeRole"
+  }
+}
+\end{lstlisting}
+
+\section{cloudWatchPermissions.json}
+\begin{lstlisting}[language=json]
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "kinesis:PutRecord",
+      "Resource": "arn:aws:kinesis:us-east-1:31415926:stream/VPCFlowLogs"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::31415926:role/CloudWatchToKinesisRole"
+    }
+  ]
+}
+\end{lstlisting}

@@ -1,0 +1,237 @@
+% This is the root file of the thesis: thesis.tex
+
+%%===================================
+\documentclass[12pt, twoside]{report}
+
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage[utf8]{inputenc} % This defines the font-encoding you prefer to use
+\usepackage[pdftex]{graphicx}
+\usepackage[bindingoffset=1cm,centering,includeheadfoot,margin=2cm]{geometry}
+\usepackage{csquotes}
+\usepackage{placeins}
+\usepackage{float}
+\usepackage[
+    citestyle=numeric-comp,
+    backend=biber,
+    bibencoding=inputenc
+    ]{biblatex}
+\addbibresource{refs.bib}
+\usepackage[toc,page]{appendix}
+\usepackage{setspace}
+\linespread{1.5}
+\setcounter{tocdepth}{2} 
+\usepackage[colorlinks=true, pdfstartview=FitV,
+linkcolor=blue, citecolor=blue, urlcolor=blue]{hyperref}
+\setlength{\parindent}{0pt} % No indentation between paragraphs
+\setlength{\parskip}{10pt} % Space between paragraphs
+
+% Tables
+\usepackage{ltxtable}
+\usepackage{booktabs}
+
+% Needed for code listings
+\usepackage{listings}
+% https://tex.stackexchange.com/questions/106770/how-to-add-line-numbers-to-a-program-listing-code
+\usepackage{color}
+
+% Subfigure
+\usepackage{subcaption}
+
+\usepackage{floatpag} % to move floatpagenr to topright
+
+% Fußnote
+\usepackage[hang]{footmisc}
+\setlength{\footnotemargin}{-0.8em}
+
+\usepackage{csquotes}
+\usepackage{afterpage} % needed for empty page after front
+
+%%===================================
+% Custom definitions
+    
+% Signal color
+\definecolor{signalColor}{RGB}{164, 63, 114}
+\newcommand\signal[1]{\textbf{\textcolor{signalColor}{#1}}}
+    
+% List with less space between items
+\newenvironment{cList}{
+\begin{itemize}
+  \setlength{\itemsep}{0pt}
+  \setlength{\parskip}{0pt}
+  \setlength{\parsep}{0pt}
+}{\end{itemize}}
+
+% Enumeration with less space between items
+\newenvironment{cEnum}{
+\begin{enumerate}
+  \setlength{\itemsep}{0pt}
+  \setlength{\parskip}{0pt}
+  \setlength{\parsep}{0pt}
+}{\end{enumerate}}
+
+% Space LoL
+\let\Chapter\chapter
+\def\chapter{\addtocontents{lol}{\protect\addvspace{10pt}}\Chapter}
+
+% Code definition JSON
+\definecolor{numberColor}{RGB}{24,118,129}
+\newcommand\JSONnumbervaluestyle{\color{numberColor}}
+\newcommand\JSONstringvaluestyle{\color{signalColor}}
+
+\newif\ifcolonfoundonthisline
+
+\makeatletter
+
+\lstdefinestyle{json}{
+  showstringspaces    = false,
+  keywords            = {false,true},
+  alsoletter          = 0123456789.,
+  morestring          = [s]{"}{"},
+  stringstyle         = \ifcolonfoundonthisline\JSONstringvaluestyle\fi,
+  MoreSelectCharTable =%
+    \lst@DefSaveDef{`:}\colon@json{\processColon@json},
+  basicstyle          = \ttfamily,
+  keywordstyle        = \ttfamily\bfseries
+}
+
+\lstset{
+  numbers=left,
+  lineskip={-1.5pt},
+  captionpos=b,
+  basicstyle=\footnotesize\ttfamily,
+  xleftmargin=1cm,
+  breaklines=true
+}
+
+\newcommand\processColon@json{%
+  \colon@json%
+  \ifnum\lst@mode=\lst@Pmode%
+    \global\colonfoundonthislinetrue%
+  \fi
+}
+
+\lst@AddToHook{Output}{%
+  \ifcolonfoundonthisline%
+    \ifnum\lst@mode=\lst@Pmode%
+      \def\lst@thestyle{\JSONnumbervaluestyle}%
+    \fi
+  \fi
+  \lsthk@DetectKeywords% 
+}
+
+\lst@AddToHook{EOL}%
+  {\global\colonfoundonthislinefalse}
+
+\makeatother
+% End code definition JSON
+
+% Rename listings and toc
+\renewcommand{\contentsname}{Table of Contents}
+\renewcommand{\lstlistlistingname}{List of Listings}
+
+%=====================
+\newcommand{\HRule}[1]{\rule{\linewidth}{#1}} 	% Horizontal rule
+
+\makeatletter							% Title
+\def\printtitle{%						
+    {\centering \@title\par}}
+\makeatother									
+
+\makeatletter							% Author
+\def\printauthor{%					
+    {\centering \large \@author}}				
+\makeatother	
+
+% Metadata (Change this)
+% --------------------------------------------------------------------
+\title{	\normalsize \textsc{Technische Universität Berlin} 	% Subtitle
+		 	\\[2.0cm]								% 2cm spacing
+			\HRule{0.5pt} \\						% Upper rule
+			\LARGE \textbf{\uppercase{FOG computing project report}}	% Title
+			\HRule{2pt} \\ [0.5cm]		% Lower rule + 0.5cm spacing
+			\normalsize \today			% Todays date
+		}
+
+\author{
+		Jacek Janczura, Marina Mursa, Clemens Peters,\\ Nursultan Shabykeev, Ali Karaki, Marius Schidlack, Alexandre Rozier \\ 
+}
+
+\usepackage{enumitem}
+
+\begin{document}
+
+% Maketitle
+% ------------------------------------------------------------------------------
+\thispagestyle{empty}		% Remove page numbering on this page
+
+\printtitle					% Print the title data as defined above
+  	\vfill
+\printauthor				% Print the author data as defined above
+\newpage
+
+%%========================================
+% Frontmatter
+
+\include{frontmatter/front} % This is the titlepage
+\setcounter{page}{0}
+\pagenumbering{Roman}
+\include{frontmatter/summary}
+\tableofcontents
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{section}{\listfigurename}
+\listoffigures
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{section}{\lstlistlistingname}
+\lstlistoflistings
+
+%%=========================================
+% Mainmatter
+
+\cleardoublepage
+\setcounter{page}{0}
+\pagenumbering{arabic}
+\include{mainmatter/01_introduction}
+% Include more chapters as required.
+\chapter{Introduction - Marina}
+    \input{sections/section1.tex}
+\chapter{System architecture - Jacek}
+    \input{sections/section3-0.tex}
+    \input{sections/section3-1.tex}
+    \input{sections/section3-2.tex}
+    \input{sections/section3-3.tex}
+    \input{sections/section3-4.tex}
+    \input{sections/section3-5.tex}
+    \input{sections/section3-6.tex}
+    \input{sections/section3-7.tex}
+\chapter{Project management techniques - Marina}
+    \input{sections/section2-1.tex}
+    \input{sections/section2-2.tex}
+\chapter{Conclusions and Recommendations}
+    \input{sections/section4.tex}
+%%=========================================
+%Backmatter
+
+\begin{appendices}
+\include{backmatter/00_lessImportantText}
+\include{backmatter/01_acronyms}
+\include{backmatter/02_lexicon}
+\include{backmatter/03_listings}
+% Include more appendices as required.
+\input{sections/appendix.tex}
+\end{appendices}
+
+
+\cleardoublepage
+\addcontentsline{toc}{chapter}{Bibliography}
+\defbibheading{notonline}{\chapter*{Bibliography}}
+\printbibliography[heading=notonline, nottype=online]
+\defbibheading{online}{\chapter*{Bibliography (Online)}}
+\printbibliography[heading=online, type=online]
+%%=============================================
+
+\end{document}

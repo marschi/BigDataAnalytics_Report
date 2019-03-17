@@ -23,11 +23,11 @@ In this section, we will focus on how we used the Metrics files. The Metrics alr
 \end{minipage}
 
 Some efforts were made to parse the files with a python script. Once all the files are parsed, we take the \textit{SampleCount} values for each entry, and sort them into buckets according to their \textit{Timestamp}. For the time being, we did not differentiate between successful or failed requests, however, this might be a useful thing to do in the future. The buckets were chosen to be of 5 minute granularity in the final product, however we also experimented with 1 minute buckets.
-\begin{figure}[H]
+\begin{figure}[h]
     \centering
     \includegraphics[width=1\textwidth]{images/data_preprocessing.png}
-    \label{fig:data_preprocessing}
     \caption{Data preprocessing pipeline}
+    \label{fig:data_preprocessing}
 \end{figure}
 \afterpage{\FloatBarrier}
 A smaller bucket size means higher responsiveness in a real time anomaly detection model, since in order to react to incoming data, we have to wait until the current bucket is full. Furthermore, if the bucket size gets to small, the machine learning model might get vulnerable to noise. Larger buckets on the other side compress the training data for better usability and can make the model more robust. Next, we summed up the value in every bucket to obtain the raw time series, which can be seen in figure \ref{fig:data_preprocessing} in the first picture. 

@@ -1,73 +1,96 @@
-   This chapter will give an overview to the ways this project was managed internally, as well as by the supervisors. It includes a detailed introduction to the Kanban - management tool, followed by complementary techniques used by the team to further improve the working process.
-    \section{Kanban}
-For internal management of the team, based on the suggestions of our industry partners, it was decided to use an Agile product management technique - Kanban. It emphasizes on a continuous delivery mindset, trying not to overburden the development team. Like other Agile techniques, it was designed to facilitate communication and division of work inside the team, while giving live updates so each member can keep up with the process. The simple and intuitive structure helps the team work in a more efficient way.
-% Marius: More efficient than what?
-        \subsection{Principles}
-        Kanban is build by respecting the following 3 principles:
+ \section{Data handling}
+        \subsection{Data generation}
+        When it comes to data in Machine Learning models, in most cases the more training data there is, the better results we can achieve. Unfortunately in case of this project, we did not have the desired amount of data to get the appropriate results from the models. As a short term solution for this problem, the team decided to generate some data that has random anomaly spikes. Below, the two approaches for data generation can be found. \\
+        \subsubsection{Flowlogs stream generation - Java - Nursultan}
+        \textbf{Code relative to this section can be found in \lstinline{utils/flowlogs-stream-generation/}}. \\
+        Prior we got real data from BMW, we decided to generate the data that slightly reflects patterns of the real data. We needed that generated data to start training and testing our models. \\To implement this, we decided to write 2 Java-based multi-threaded services. The first service generates sequential http-requests from EC2 instance named \textit{Data\textunderscore producer} to the EC2 instance called \textit{Fog\textunderscore secured\textunderscore server}. The second service is deployed on \textit{Anomaly\textunderscore producer} EC2 instance, awakes randomly 2 times per day and sends multiple requests within several minutes, thereby creating an anomaly situation.
+            \begin{figure}[h]
+            \centering
+            \includegraphics{images/data-generation.jpg}
+            \caption{The pattern of the generated data}
+            \label{fig:data-generation}
+        \end{figure}
+        \FloatBarrier
+        % Marius: How do we know the generated data reflects the patterns of the real data before we got it?
+        EC2 instances that send HTTP requests are in the same Virtual Private Cloud(VPC)\footnote{ https://docs.aws.amazon.com/vpc/index.html}. 
+        The EC2 instance that gets requests is within another VPC. There we used VPC Flow Logs feature that lets capture information about the IP traffic that comes in. A flow log record is a space-separated string that has the following format:
+            \begin{figure}[h]
+                \centering
+                \includegraphics[width=1\textwidth]{images/flow-log-format.png}
+                \caption{Flow Log record format}
+                \label{fig:flow-log-format}
+            \end{figure}
+        \FloatBarrier
+        AWS provides a set of near real-time data streaming services named Amazon Kinesis Data Streams. We used the service called Kinesis Firehose to load VPC FlowLogs streams. Creation of a Kinesis Data Firehose delivery stream can be done as follows, replacing the placeholder values for RoleARN and BucketARN with the role and S3 bucket ARN where flog logs will be stored:
+        \begin{figure}[h]
+            \centering
+            \includegraphics[width=1\textwidth]{images/kinesis-firehose.png}
+            \caption{Creation of Kinesis Data Firehose delivery stream}
+            \label{fig:kinesis_firehose_delivery}
+        \end{figure}
+        \FloatBarrier
+        After the Amazon Kinesis Data Firehose delivery stream is ready and in an active state and the IAM role have been created, the next step to create the CloudWatch Logs subscription filter. \\
+        The subscription filter connects Firehose and CloudWatch Logs and starts the flow of real-time log data from the chosen log group to Amazon Kinesis Data Firehose delivery stream.\footnote{ https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html}\\
+        \begin{figure}[h]
+            \centering
+            \includegraphics[width=1\textwidth]{images/subscription-filter-creation.png}
+            \caption{Creation of subscription filter}
+            \label{fig:subscription_filter_creation}
+        \end{figure}
+        \FloatBarrier    
+        After the subscription filter is set up, CloudWatch Logs will direct all the incoming log events that match the filter pattern to Amazon Kinesis Data Firehose delivery stream. It might take a few minutes before the data will be saved into S3. However, it is possible to monitor a size of incoming data and other metrics in a \textit{Monitoring} tab in a Firehose console page. \\
+        While creating the subscription filter, it is important to define properly IAM roles and permission policies and correctly associate the permissions policy with the role. The full description of establishing the connection between Kinesis streams and CloudWatch Logs is available in an official documentation.\\
+        The data generation pipeline is presented below:
+        \begin{figure}[h]
+            \centering
+            \includegraphics[width=1\textwidth]{images/data-generation-pipeline.png}
+            \caption{Data generation pipeline}
+            \label{fig:data_generation_pipeline}
+        \end{figure}
+        \FloatBarrier
+        % I think we lack a brief introduction into what all these AWS Services are
+        \subsubsection{Data Generator - Python - Ali }
+
+        The Dummy Data Generator in Python variant is an alternative version of the one being used currently. It simulates a stream of https requests to a specific IP (EC2 instance inside a VPC). It is highly configurable from scheduled time for requests, has a dynamic server IP for the EC2 instance, and a placeholder for the number of desired requests being sent. We needed an easy to customize script that can generate data fast. This script fulfills this requirement. No complex dependencies and pretty fast executions.\\ In concept, the workflow to generate dummy data was to do the following:
             \begin{enumerate}
-  \item \textbf{Visualization}: Kanban uses mechanisms organised in a Kanban board. The board, by presenting all the tasks at once, in an easy to grasp manner, gives the developer a better understanding of the context, thus facilitating the workflow.
-  \item \textbf{Limited amount of work}: because the number of tasks are limited from a week to another (as well as the number of cards stored in production) the team does not feel overburdened with work, and is not pressured to deliver something by sacrificing on the quality aspect.
-  \item \textbf{Continuous flow}: when a member is done with his/her tasks, he/she can just move forward with the work process by picking up the next tasks (placed on the top of the stack). This way nobody sits around waiting to be designated with work, thus ensuring a continuous workflow.
+                \item It sends HTTPS requests with our scripts to an EC2 instance
+                \item The logs from EC2 instance are saved in CloudWatch
+                \item VPC Flowlogs are saved inside a bucket on S3
+                \item Flowlogs aggregator lambda function is used to aggregate all the files into actual data set
+            \end{enumerate}
+        A request may be rejected or accepted when it reached the EC2, by comparing it to the IP of a machine from the VPC (it can be seen in Fig. \ref{fig:data_gen})
+        \begin{figure}[h!]
+            \centering
+            \includegraphics[width=1\textwidth]{images/data-gen-2.png}
+            \caption{Data generation in a python script}
+            \label{fig:data_gen}
+        \end{figure}
+        Requests are sent to a specific IP, the requests are categorized into 2. Successful and failed with codes 200 and 599 respectively.\\
+        The sent data that is already separated into successful and failed requests, and the number of requests are the variables used for anomaly detection.\\
+        Anomalies detected with this data correspond to the number of requests recorded in a specific timestamp. So the code logic goes as following:
+        \begin{enumerate}
+    \item Send failed requests and successful requests to the EC2 instance
+    \item Randomly send those requests in 2 different methods
+    \item Every day from Monday to Sunday, randomly send only 1 very abnormal number of requests and 1 very high number of requests
 \end{enumerate}
-        \subsection{Benefits}
-        Taking in consideration the above mentioned information, it is easy to identify the way this project management method can improve the delivery process of a product, following are a couple of its advantages: 
-            \begin{enumerate}
-                \item \textit{Kanban methodology utilizes short working cycles.} In the case of this project the cycle was limited at one week (with an exception during the winter break).  This 1 week cycles ensured a continuous delivery process, where the industry partners had the opportunity to keep the team in check, by introducing new features/corrections in the process.
-                \item \textit{Kanban is very responsive to change and feedback.} As mentioned above, thanks to a short cycle, the BMW representatives had the opportunity to introduce change in an utile time, by coming up with new features or scenarios, as well as feedback to improve or correct the direction of the project.
-                \item \textit{Kanban removes time wasting activities.} While popular management techniques require a series of mandatory daily meetings and discussions, Kanban eliminates this type of time wasting activities. Meetings were organized once a week or on team’s request, in cases of confusion or identification of impediments of the working process that should be discussed and solved at team level.
-            \end{enumerate}
-        \subsection{Roles}
-Given the Kanban approach, it does not have well predefined roles. It suggests to start from the structure of your team, and current management, and to evolve it as seen necessary, taken in consideration the specific of the methodology.
-As the team had no previous experience working together, it decided to have a Project Manager that would facilitate the communication between them and the supervisors, as well as take care of organizational issues.
-The project manager’s responsibilities are:
-            \begin{itemize}
-              \item Managing the Kanban board (in Trello) which means writing down the tasks, assigning responsible people, adding labels, deadlines (if necessary), updating the progress, and cleaning up the board by periodically archiving the old cards.
-              \item Managing other means of communication, like Slack, by organizing specific channels, setting up notifications and reminders.
-              \item Setting up and managing meetings, making sure they are productive and that the team is up to date with project’s progress.
-              \item Being the spokesperson for the team, mediating the communication with the supervisors.
-            \end{itemize}
-        \subsection{Kanban board}
-As already mentioned above, Kanban uses a board as it’s main management tool. A Kanban board is designed to help visualise the workflow. A typical board can be broken down into the following elements:
-            \begin{enumerate}
-                \item Cards or Visual Signals 
-                \item Columns
-                \item Work in Progress (WIP) Limits
-            \end{enumerate}
-The visual signals are usually the tasks that are written on stickies, in the case of a physical board, or on cards, in the case of software based boards. Each card encapsulates one user story, and all the user stories should require an equal or at least close enough effort. Once written down and attached to the board, these visual signals help the team, as well as other stakeholders, understand the product development.
-Columns represent different production stages that an user story can be in. All these stages together compose the workflow. The columns can be as simple as “To do”, “In progress” and “Done”, to more complicated stages, depending on the complexity of the development process.
-Work in Progress Limits are the maximum number of cards that can be placed in a certain column at a certain period of time. This is done in order to limit the team’s ability to commit to too much work in a short period of time.
-                \subsubsection{Trello as a Kanban board}
-For the project, the team decided, following the supervisors’ suggestion, to use a digital board. This allows it not to share a physical space (like an office), and to work remotely and asynchronously. Trello is one of the simplest and easiest way to mimic a Kanban board by allowing the users to create lists, that mimic the columns, and cards that represent user stories.
+  
+        As this script is used only to generate the data the script runs in an infinite loop until it is disabled manually, with a possibility to configure the number of requests and date of sending them.\\
 
-For this project, it was decided to create the following workflow structure:
-    \begin{itemize}
-        \item Backlog - aggregates all user stories
-        \item Breakdown (Doing and Done)- splits up user stories in smaller units of work
-        \item Implementation (Doing and Done) - indicates what cards are currently in work
-        \item Validation (Doing and Done)- tests the finished user stories against the definition-of-done.
-    \end{itemize}
 
-    \begin{figure}[h]
-        \centering
-        \includegraphics[width=1\textwidth]{images/trello.png}
-        \caption{Big Data Analytics Trello board }
-        \label{fig:trello_board_1}
-    \end{figure}
+\subsection{Fixed data approach - Marius}
+    \input{fixed_data_approach.tex}
     
-After setting up the above mentioned columns, a user can start adding cards/user stories to the backlog. As seen in figure \ref{fig:trello_board_1}, Trello allows an user to add a title, a description (to detail the card), attachments, comments, due dates, responsible members and labels to a card.
-It's worth noting, that for this project, the team used the board not just for programming related tasks. The Trello board was used for managing all project related assignments, for the purpose of registering each week's work.
-\begin{figure}
-    \centering
-    \includegraphics[width=1\textwidth]{images/card-view.png}
-    \caption{Trello board card view with labeling details }
-    \label{fig:fig:trello_board_2}
-\end{figure}
-In this project, the team used the following series of labels to mark the purposes of the user-story (see \ref{fig:trello_board_2}):
-    \begin{itemize}
-    \item \textbf{Long-term goal}: indicates that the card is most likely a use case in the project, which should be broken down further into smaller tasks
-    \item \textbf{Research}: marks tasks that require the team to look for papers, documentation, solutions to solve certain impediments
-    \item \textbf{Administrative}: highlights that a task has a managerial character
-    \item \textbf{Technical}: indicates a developer task;
-    \item \textbf{Miscellaneous}: used for any other subjects that a task can have, except the ones mentioned above (e.g. creating the presentation or documentation paper)
-\end{itemize}
+\subsection{Streaming data approach - Alex}
+
+    \subsubsection{Using a custom script hosted on EC2} \label{ec2script}
+    \textbf{Code relative to this section can be found in \lstinline{utils/streaming-data-mock.py}}. \\
+    Since we were just provided with a fixed dataset and did not have access to the real BMW data stream, we had to create our own mock of it, to test our solution with real-time data. Its principle is quite simple: we extract one default week from the fixed dataset provided by BMW, and use a script to send over and over this particular week on our AWS infrastructure. \par
     
+    An EC2 instance is spun up via Terraform (\ref{ec2-tf}), then provisioned thanks to an Ansible script (installation of the correct python version, required dependencies,  upload of the source code and execution). \par
+    
+    To be more specific, the script triggers a job every 15 minutes, charged with uploading a new batch of data to a specific entry point on AWS S3.
+    Please note that the data is sent synchronously with the current time, that is, at 8am we will send data concerning the timespan 7:45-8:00am from the default week. \par
+    
+    We chose to implement this fake stream in order to test the whole pipeline, because it was the closest we could imitate BMW's infrastructure putting new batches of data to our entry S3 bucket. This was useful during the final presentation (where we could show our pipeline processing live data), and also to work as close a possible to a real-life scenario.
+
+% https://www.overleaf.com/2386286181cpqpvxpvkkzt

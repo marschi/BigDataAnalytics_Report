@@ -1,75 +1,145 @@
-\section{Notification functions - Jacek}
+\section{Project delivery}
+\label{sec:project_delivery}
+\textit{Author: Alexandre Rozier} \\
+After six months of intensive work, we ended up with a pretty diverse code base that we needed to unify. We had various models, lambda functions, EC2 instances, roles and policies composing our processing pipeline, and hand them in the most convenient way.
 
-Notification part is a very important part of our project. After collecting the data, preparing them and using machine learning algorithms, we need to somehow communicate with the user. In this paragraph we will describe the motivation and ways of informing the user about the anomalies and predictions.
+\subsection{Terraform}
 
-\subsection{Motivation}
-To notify the user in order to react for the main events such as anomaly detection, we created a notification functions. Firstly we are calling user by triggering ChatBot API and secondly we are sending notification to the slack channel with a graph and marked anomaly to let user faster react for it.
+\textbf{The source code for this part is located in \lstinline{terraform/}.}\\
+We chose to use the infrastructure-as-code deployment tool \href{https://www.terraform.io/}{Terraform}, with a few quirks that are presented below. \\
+Terraform uses a \lstinline{state} to keep track of the state of managed cloud components, and perform its changes. This file is created locally on the machine running the terraform commands, but problems arise when two or more people try to concurrently run terraform scripts at the same time : inconstistencies could arise from such situations, which is to avoid at all costs.\\
+To deal with this problem, we added the following piece of code: 
+\begin{lstlisting}
 
-\textbf{User story} \\
-We decided to create a user story where user who will be notified in case of an alert is one of the administrators Bob. Bob and his team are using slack in their work as we do in this project. \\
-In case of the anomaly detection we are triggering ChatBot API to call Bob and notify him about the anomaly. To let Bob faster make his decision and in case of emergency, escalate the problem(or in case of false detection skip it), we decided to show to him the graph where he can visually asses the problem. Since Bob and his team are using slack we decided to send them notification to special slack channel as well. \\
-To accelerate the decision making process, even before logging in to the consoles, cloud watches etc. we decided to send him a part of the graph with prediction and marked anomaly. This will be straightforward information for the Bob or his colleagues what is happening. The example of notification massages send to the slack channel is depicted in a fig. \ref{fig:userNotif}.
+ terraform {
+  backend "s3" {
+    bucket         = "fog-bigdata-terraform-backend"
+    dynamodb_table = "terraform-state-lock-dynamo"
+    key            = "backend/terraform.tfstate"
+    region         = "${var.region}"
+    encrypt = true
+  }
+} 
+\end{lstlisting}
 
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=0.75\textwidth]{images/UserNotification.png}
-    \caption{Example of anomaly notification}
-    \label{fig:userNotif}
-\end{figure}
+Which hosts this \lstinline{state} in a remote s3 bucket, allowing thanks to a locking mechanisme several people to work concurrently on the terraform files.
 
-\subsection{Methods to notify the user about detected anomalies}
+\subsection{Lambda functions deployment}
+AWS has recently released a lambda function management tool called \href{https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html}{SAM}, but unfortunately Terraform does not support it yet, so we had to package our lambda functions in ZIP files (\href{https://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html#python-package-dependencies}{ref}) and use Terraform's \lstinline{aws_lambda_function} to deploy them.
+
+We had to overcome some hurdles, which are built-in AWS limitations regarding lambda functions: 
 \begin{itemize}
-\item \textbf{ChatBot API notification} - To notify the ChatBot API in case of an anomaly we are sending REST POST message to provided by ChatBot team URL as it is shown in an example in fig. \ref{fig:chatbot}. That POST is triggering ChatBot which calls the user.
+    \item Zipped deployment package size limited to 50MB
+    \item Unzipped deployment package, including layers, limited to 250MB
+\end{itemize}
+Since we are using the Matplotlib and Pandas librairies, we ended up with deployment packages weighting more than the AWS limit. \\
+That's why we came up with the idea of creating our own layers (thanks to \lstinline{aws_lambda_layer_version}), and linking our lambda functions to those layers. Thus, we end up with ligthweight lambda functions ( \< 1MB ), and also reusable layers.
+
+\subsection{IAM roles and policies}
+Every AWS service needs the correct policies to access the other components it works with. For instance, our lambda functions need to access AWS S3 and AWS SageMaker, and this is fortunately well supported by terraform.\\
+The code below creates:
+\begin{itemize}
+    \item A role that can only be assumed by AWS Lambda services
+    \item Two policies giving full access to S3 and Sagemaker, attached to this previous role.
 \end{itemize}
 
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=0.8\textwidth]{images/chatbot-api-notif.png}
-    \caption{Example of ChatBot API notification}
-    \label{fig:chatbot}
-\end{figure}
+\begin{lstlisting}
+resource "aws_iam_role" "lambda_sm_s3_role" {
+  description="Role giving lambda full access to S3 and SageMaker"
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
 
+data "aws_iam_policy" "AmazonS3FullAccess" {
+  arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
 
+data "aws_iam_policy" "AmazonSageMakerFullAccess" {
+  arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "s3-full-access" {
+  role       = "${aws_iam_role.lambda_sm_s3_role.name}"
+  policy_arn = "${data.aws_iam_policy.AmazonS3FullAccess.arn}"
+}
+
+resource "aws_iam_role_policy_attachment" "sm-full-access" {
+  role       = "${aws_iam_role.lambda_sm_s3_role.name}"
+  policy_arn = "${data.aws_iam_policy.AmazonSageMakerFullAccess.arn}"
+}
+\end{lstlisting}
+
+\subsection{EC2 Instances}\label{ec2-tf}
+As previously mentioned in \ref{ec2script}, we need to spin up an EC2 instance, but also upload and run a script generating a fake stream of data to feed our processing pipeline.\\
+Since Terraform is only an infrastructure management tool, we needed an additional provisioning tool for this task. We went with Ansible, since it's pretty straightforward to use.\\
+Thus, terraform calls a specific command after the creation of the EC2 instance, which runs an Ansible playbook (in \lstinline{utils/ec2-provisioning.yml} charged with running the script.
+\subsubsection{Ansible provisioning}
+Since Terraform allows us to run specific scripts after provisioning of a resource, we used this hook to trigger an Ansible job dealing with the provisioning of our EC2 instance, and a few points are worth mentioning:
 \begin{itemize}
-\item \textbf{Slack channel metrics} - To send the message with exact metrics and data we are sending the message to the slack channel using Amazon Simple Notification Service topic.
+    \item Since we could want to SSH to the EC2 instance, we also used Terraform to manage an \lstinline{aws_key_pair}, which is the public part of an SSH key pair of our choice. The private part is hosted on the machine running the Terraform script, and of course not commited to the source code.
+    \item   When considering the followinng piece of code : 
+        \begin{lstlisting}
+        provisioner "local-exec" {
+            command = "rm ansible-hosts.ini && 
+            echo \"${self.public_ip} ansible_user=ec2-user\" >> ansible-hosts.ini 
+            && ansible-playbook ec2-provisioning.yml --private-key ~/Downloads/default-vpc-access.pem -i ansible-hosts.ini"
+        }
+        \end{lstlisting}
+        We see that we have to first append to \lstinline{ansible-hosts.ini} the public IP of our EC2 instance. This is because Ansible needs to know the IPs of its managed servers, in order to provision them.\\
+        Also, the \lstinline{--private-key} argument should be changed to point to the location of the private key used to SSH to the server.
+\end{itemize}
 
-\begin{lstlisting}[language=Python, caption=Sending message to slack channel using SNS topic]
-    #Send Slack MSG
-    sns = boto3.resource('sns')
-    topic = sns.Topic('arn:aws:sns:us-east-1:746022503515:RCF-SageMaker')
+
+\subsection{S3 Notifications \& SNS Topics}
+
+Our lambda functions are triggered by SNS Topic events, monitoring uploads on specific endpoints of S3. We need to create those topics, and also the S3 notifications that send events to those, in order to have a working pipeline. \\
+This is handled by Terraform, with the \lstinline{aws_s3_bucket_notification} and \lstinline{aws_sns_topic} directives, that take care of spinning up those services with the correct roles and policies.
+
+\subsection{S3 Buckets}
+The management of S3 bucket with Terraform can be tricky, since calling \lstinline{terraform destroy} will delete all existing buckets and get rid of all our data! That's why we didn't import the bucket holding all our data to Terraform.
+
+Instead, we create a new bucket called \lstinline{sanitized-datasets}, which will after creation be populated by a script (\lstinline{data-preprocessing.py}) with subfolders, each containing our data correctly formatted for each algorithm. For instance, \lstinline{s3://sanitized-bucket/deep_ar/} will contain data with a DeepAR-compatible shape. This is implemented by using the \lstinline{provisioner} parameter, which allows us to run local provisioning scripts after the creation of a resource. In this case, the provisioner takes care of populating the \lstinline{sanitized-datasets} bucket with correctly-shaped data.
+
+\subsection{What was not covered}
+
+Even though pretty much everything is managed by Terraform, because of the high velocity of AWS development, some features were missing.
+\begin{itemize}
+    \item Our lambda functions are usually triggered by SNS Topic events, but unfortunately this is not managed yet in Terraform. As a consequence, one has to add those triggers manually (on the AWS Lambda web editor).
     
-    response = topic.publish(
-        Message=str("Final Cut-Off Score: {}".format(score_cutoff)),
-        Subject='#aws',
-        MessageStructure='text/plain',
-    )
-\end{lstlisting}
-\item \textbf{Slack channel graph} - Unfortunately to send the graph to the slack channel method with using SNS topic was not working correctly. For showing the graph using AWS lambda function we needed to do the following steps:
-
-\begin{enumerate}
-\item Plot a new graph in memory.
-\item Save that graph to a buffer and go to the beginning of a buffer
-\begin{lstlisting}[language=Python, numbers=none]
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-\end{lstlisting}
-\item Add a buffer to a structure
-\begin{lstlisting}[language=Python, numbers=none]
-    my_file = {
-    'file' : ('./buf.jpg', buf, 'png')}
-\end{lstlisting}
-
-\item Add that structure to the REST POST and post that file to a slack channel.
-
-\begin{lstlisting}[language=Python, numbers=none]
-    r = requests.post("https://slack.com/api/files.upload", params=payload, files=my_file)
-\end{lstlisting}
-
-\end{enumerate}
+    \item Also, SageMaker support is almost inexistent. That's why we had to leverage Terraform's \lstinline{Provisioners} in order to train \& deploy our models. If you consider the following code:
+    
+    \begin{lstlisting}
+      // Train a MeanPredictor model and export it as endpoint
+      provisioner "local-exec" {
+        command = "python ../models/mean_predictor/train_deploy.py --trainpath s3://${aws_s3_bucket.datasets.bucket}/rcf/data/train/data.csv --role ${aws_iam_role.sm_role.arn} --freq ${var.data_aggregation_frequency}"
+      }
+    
+      // Train a DeepAR model and export it as endpoint
+      // WARING: takes ~ 2 hours
+      provisioner "local-exec" {
+        command = "python ../models/deep_ar/train_deploy.py"
+    
+        environment {
+          BMW_DATA_BUCKET       = "fog-bigdata-bmw-data"
+          SANITIZED_DATA_BUCKET = "${self.bucket}"
+          SAGEMAKER_ROLE_ARN    = "${aws_iam_role.sm_role.arn}"
+          ENDPOINT_NAME         = "${var.deepar_endpoint_name}"
+          DATA_FREQUENCY        = "${var.data_aggregation_frequency}"
+        }
+      }
+    \end{lstlisting}
+    The \lstinline{local-exec} parts are the lines taking care of training and deploying our models. They are executed after provisioning of the S3 bucket holding all the correctly-shaped data.
 \end{itemize}
-
-
-
-
-% Amazon Simple Notification Service - to notify the easiest way.

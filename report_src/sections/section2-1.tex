@@ -1,19 +1,40 @@
- \section{Data handling}
+ \section{Data processing approaches}\label{data-processing-approaches}
+        
+\subsection{Introduction}\label{data-processing-intro}
+
+From the start of the project, our goal was to work on streaming data, piped in a continuous fashion to BMW's processing infrastructure. We encountered several challenges, which explains why we chose to handle data in various ways. Below is the timeline of the different solutions we came up with to deal with each problem:
+
+\begin{enumerate}
+    \item Since our BMW colleagues needed time to hand us their data, we came up with the idea of generating our own Flowlogs (\ref{flowlogs-stream-generation},\ref{fig:json_generator}). This allowed us not to loose time, but the generated data lacked the daily patterns of real-life data, so this approach was just temporary.
+    \item Then, once the real-life data was delivered to us, we could train some models (DeepAR, RCF, MeanPredictor) on it (\ref{fixed-data-approach}), but were still lacking their streaming version.
+    \item Indeed, we also wished to build tools able to process the original streaming data, but due to security concerns, we couldn't simply plug ourselves to BMW systems, and had to some extent write some tools mocking these data streams:\\
+    \begin{itemize}
+        \item We wrote a script generating a continuous stream from BMW's real-life data, in order to test the behavior of our whole processing pipeline (\ref{sec:streaming-data-approach})
+        \item We also wanted to test how the RCF algorithm works on data streams, and for this we had to build a Kinesis-based pipeline(\ref{sec:real_time_anomaly_detection}).
+    \end{itemize}
+\end{enumerate}
+
+\textbf{Keeping the evolution of the project in mind is important to understand the choices we made regarding the pipeline architecture.  \ref{data-processing-approaches}}
+        
         \subsection{Data generation}
-        When it comes to data in Machine Learning models, in most cases the more training data there is, the better results we can achieve. Unfortunately in case of this project, we did not have the desired amount of data to get the appropriate results from the models. As a short term solution for this problem, the team decided to generate some data that has random anomaly spikes. Below, the two approaches for data generation can be found. \\
-        \subsubsection{Flowlogs stream generation - Java - Nursultan}
-        \textbf{Code relative to this section can be found in \lstinline{utils/flowlogs-stream-generation/}}. \\
-        Prior we got real data from BMW, we decided to generate the data that slightly reflects patterns of the real data. We needed that generated data to start training and testing our models. \\To implement this, we decided to write 2 Java-based multi-threaded services. The first service generates sequential http-requests from EC2 instance named \textit{Data\textunderscore producer} to the EC2 instance called \textit{Fog\textunderscore secured\textunderscore server}. The second service is deployed on \textit{Anomaly\textunderscore producer} EC2 instance, awakes randomly 2 times per day and sends multiple requests within several minutes, thereby creating an anomaly situation.
-            \begin{figure}[h]
+        \label{sec:data_generation}
+        When it comes to data in Machine Learning models, in most cases the more training data there is, the better results we can achieve. Unfortunately in case of this project, we did not have the desired amount of data to get the appropriate results from the models. As a short term solution for this problem, the team decided to generate some data that has random anomaly spikes. The section below provides a description of data generation pipeline. \\
+        \subsubsection{Flowlogs stream generation}\label{flowlogs-stream-generation}
+        \textit{Author: Nursultan Shabykeev} \\
+        
+        Prior to getting real data from BMW, we decided to generate the data with random high anomaly peaks. We needed this artificial data to start training and testing our models.\\
+        To implement this, we decided to write 2 types of services. The first one continuously generates sequential http-requests to the receiver, hereby, creating 'normal' behaviour of a system. The second one awakes randomly 2 times per day and sends multiple requests within several minutes. This leads to an anomaly situation. Figure \ref{fig:data-generation} demonstrates a pattern of our artificially generated data.
+        
+         \begin{figure}[h]
             \centering
             \includegraphics{images/data-generation.jpg}
             \caption{The pattern of the generated data}
             \label{fig:data-generation}
         \end{figure}
         \FloatBarrier
-        % Marius: How do we know the generated data reflects the patterns of the real data before we got it?
-        EC2 instances that send HTTP requests are in the same Virtual Private Cloud(VPC)\footnote{ https://docs.aws.amazon.com/vpc/index.html}. 
-        The EC2 instance that gets requests is within another VPC. There we used VPC Flow Logs feature that lets capture information about the IP traffic that comes in. A flow log record is a space-separated string that has the following format:
+        
+        \subsubsection{Architecture}
+        After studying services that AWS offers for capturing continuous real-time data, we came to the following architecture. We placed two types of sender micro-services into separate EC2 instances within a common Amazon Virtual Private Cloud (VPC)\footnote{ https://docs.aws.amazon.com/vpc/index.html}. Our receiver is basically an EC2 instance within another VPC. In essence, VPC is a virtual network environment that enables a user to easily manage resources in it. One of its useful features is Flow Logs\footnote{ https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs.html}. Flow Logs allows us to access information about all inbound and outbound traffic to and from instances in VPC. This information is represented in records. A record  consists of fields that describe the traffic flow and has the following format:
             \begin{figure}[h]
                 \centering
                 \includegraphics[width=1\textwidth]{images/flow-log-format.png}
@@ -21,7 +42,23 @@
                 \label{fig:flow-log-format}
             \end{figure}
         \FloatBarrier
-        AWS provides a set of near real-time data streaming services named Amazon Kinesis Data Streams. We used the service called Kinesis Firehose to load VPC FlowLogs streams. Creation of a Kinesis Data Firehose delivery stream can be done as follows, replacing the placeholder values for RoleARN and BucketARN with the role and S3 bucket ARN where flog logs will be stored:
+        
+        In our case, we enabled Flow Logs for a receiver's VPC to capture requests from senders. We did not track responses from the receiver. Figure \ref{fig:data_generation_pipeline} shows a general pipeline for data generation. 
+         \begin{figure}[h]
+            \centering
+            \includegraphics[width=0.8\textwidth]{images/data-generation-pipeline.png}
+            \caption{Data generation pipeline}
+            \label{fig:data_generation_pipeline}
+        \end{figure}
+        \FloatBarrier
+        
+        \subsubsection{Working with streaming data} 
+        VPC Flow Logs can be published either to Amazon CloudWatch Logs or directly to Amazon S3. We decided to publish to CloudWatch Logs because later we would like to try out Kinesis real-time data analysis services from AWS on the streaming log data. 
+        Amazon Kinesis Data Streams (KDS) is a set of services provided by AWS to work with real-time streaming data: 
+        \begin{displayquote}
+            Amazon KDS is a massively scalable and durable real-time data streaming service. KDS can continuously capture gigabytes of data per second from hundreds of thousands of sources. . . . The data collected is available in milliseconds to enable real-time analytics use cases. . . .\cite{awsKds} 
+        \end{displayquote} 
+        From this set of services, we used Kinesis Firehose to load VPC Flow Logs. Creation of a Firehose delivery stream can be done as follows, replacing the placeholder values for RoleARN and BucketARN with the role and S3 bucket ARN where flog logs will be stored:
         \begin{figure}[h]
             \centering
             \includegraphics[width=1\textwidth]{images/kinesis-firehose.png}
@@ -29,8 +66,8 @@
             \label{fig:kinesis_firehose_delivery}
         \end{figure}
         \FloatBarrier
-        After the Amazon Kinesis Data Firehose delivery stream is ready and in an active state and the IAM role have been created, the next step to create the CloudWatch Logs subscription filter. \\
-        The subscription filter connects Firehose and CloudWatch Logs and starts the flow of real-time log data from the chosen log group to Amazon Kinesis Data Firehose delivery stream.\footnote{ https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html}\\
+        
+        After the Firehose delivery stream is ready and in an active state, we direct the streaming data to it from CloudWatch Logs. This can be done through a subscription filter\footnote{ https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html}. The subscription filter connects a Firehose stream and CloudWatch logs and starts a flow of real-time log data to a Firehose delivery stream.
         \begin{figure}[h]
             \centering
             \includegraphics[width=1\textwidth]{images/subscription-filter-creation.png}
@@ -38,35 +75,32 @@
             \label{fig:subscription_filter_creation}
         \end{figure}
         \FloatBarrier    
-        After the subscription filter is set up, CloudWatch Logs will direct all the incoming log events that match the filter pattern to Amazon Kinesis Data Firehose delivery stream. It might take a few minutes before the data will be saved into S3. However, it is possible to monitor a size of incoming data and other metrics in a \textit{Monitoring} tab in a Firehose console page. \\
-        While creating the subscription filter, it is important to define properly IAM roles and permission policies and correctly associate the permissions policy with the role. The full description of establishing the connection between Kinesis streams and CloudWatch Logs is available in an official documentation.\\
-        The data generation pipeline is presented below:
-        \begin{figure}[h]
-            \centering
-            \includegraphics[width=1\textwidth]{images/data-generation-pipeline.png}
-            \caption{Data generation pipeline}
-            \label{fig:data_generation_pipeline}
-        \end{figure}
-        \FloatBarrier
-        % I think we lack a brief introduction into what all these AWS Services are
-        \subsubsection{Data Generator - Python - Ali }
+        After the subscription filter is set up, CloudWatch Logs sends all the incoming log events that match the filter pattern to Amazon Kinesis Data Firehose delivery stream. It might take a few minutes before the data will be saved into S3. However, it is possible to monitor a size of incoming data and other metrics in a \textit{Monitoring} tab in a Firehose console page. \\
+        While creating the subscription filter, it is important to define properly IAM roles and permission policies and correctly associate the permissions policy with the role. The full description of establishing the connection between Kinesis streams and CloudWatch Logs is available in an official documentation \cite{awsFirehoseSubFilter}.\\
+        As stated above, we used Kinesis services to get introduced to real-time data analysis tools available in AWS. Later, we installed Kinesis Data Analytics\footnote{https://aws.amazon.com/kinesis/data-analytics} as a before step before sending the data to S3 bucket (see figure \ref{fig:data_generation_pipeline}). This way we tried to make a simple analysis and, for the first time, apply Random Cut Forest algorithm to the artificially streamed data. Even though, the work described in the current section was a temporary implementation, it generally helped us to come up later with final solutions.\\
+        As the real data was eventually published in an S3 bucket, we did not need the data generation pipeline anymore. That is why we currently do not deliver it, only the code for generating requests is available in GitHub. The version that is implemented in Java is available in: \lstinline{utils/flowlogs-stream-generation/}.\\
+        Another approach that is implemented in Python is described in the following section.
+      
+        \subsubsection{Data Generator - Python }\label{data-generator}
+        
+        \textit{Author: Ali Karaki}
 
-        The Dummy Data Generator in Python variant is an alternative version of the one being used currently. It simulates a stream of https requests to a specific IP (EC2 instance inside a VPC). It is highly configurable from scheduled time for requests, has a dynamic server IP for the EC2 instance, and a placeholder for the number of desired requests being sent. We needed an easy to customize script that can generate data fast. This script fulfills this requirement. No complex dependencies and pretty fast executions.\\ In concept, the workflow to generate dummy data was to do the following:
+        The Dummy Data Generator in Python variant is an alternative version of the one being discribed above. It simulates a stream of https requests to a specific IP (EC2 instance inside a VPC). It is highly configurable from scheduled time for requests, has a dynamic server IP for the EC2 instance, and a placeholder for the number of desired requests being sent. We needed an easy to customize script that can generate data fast. This script fulfills this requirement. It had no complex dependencies and has a pretty fast executions.\\ In concept, the workflow to generate dummy data was to do the following:
             \begin{enumerate}
-                \item It sends HTTPS requests with our scripts to an EC2 instance
-                \item The logs from EC2 instance are saved in CloudWatch
-                \item VPC Flowlogs are saved inside a bucket on S3
-                \item Flowlogs aggregator lambda function is used to aggregate all the files into actual data set
+                \item It sends HTTPS requests with our scripts to an EC2 instance.
+                \item The logs from EC2 instance are saved in CloudWatch.
+                \item VPC Flowlogs are saved inside a bucket on S3.
+                \item Flowlogs aggregator lambda function is used to aggregate all the files into actual data set.
             \end{enumerate}
-        A request may be rejected or accepted when it reached the EC2, by comparing it to the IP of a machine from the VPC (it can be seen in Fig. \ref{fig:data_gen})
+        A request may be rejected or accepted when it reached the EC2, by comparing it to the IP of a machine from the VPC (it can be seen in Fig. \ref{fig:data_gen}).
         \begin{figure}[h!]
             \centering
             \includegraphics[width=1\textwidth]{images/data-gen-2.png}
             \caption{Data generation in a python script}
             \label{fig:data_gen}
-        \end{figure}
-        Requests are sent to a specific IP, the requests are categorized into 2. Successful and failed with codes 200 and 599 respectively.\\
-        The sent data that is already separated into successful and failed requests, and the number of requests are the variables used for anomaly detection.\\
+        \end{figure}\\
+        Requests are sent to a specific IP, the requests are categorized into 2 sections: successful and failed with codes 200 and 599 respectively.\\
+        The sent data, that is already separated into successful and failed requests, and the number of requests are the variables used for anomaly detection.\\
         Anomalies detected with this data correspond to the number of requests recorded in a specific timestamp. So the code logic goes as following:
         \begin{enumerate}
     \item Send failed requests and successful requests to the EC2 instance
@@ -77,12 +111,13 @@
         As this script is used only to generate the data the script runs in an infinite loop until it is disabled manually, with a possibility to configure the number of requests and date of sending them.\\
 
 
-\subsection{Fixed data approach - Marius}
+\subsection{Fixed data approach}\label{fixed-data-approach}
     \input{fixed_data_approach.tex}
     
-\subsection{Streaming data approach - Alex}
-
-    \subsubsection{Using a custom script hosted on EC2} \label{ec2script}
+\subsection{Streaming data approach}
+\textit{Author: Alexandre Rozier} 
+\label{sec:streaming-data-approach}
+    This approach uses \textbg{ a custom script hosted on EC2} \label{ec2script}.
     \textbf{Code relative to this section can be found in \lstinline{utils/streaming-data-mock.py}}. \\
     Since we were just provided with a fixed dataset and did not have access to the real BMW data stream, we had to create our own mock of it, to test our solution with real-time data. Its principle is quite simple: we extract one default week from the fixed dataset provided by BMW, and use a script to send over and over this particular week on our AWS infrastructure. \par
     

@@ -1,7 +1,10 @@
-\section{Anomalies detection algorithms}
-        \subsection{Amazon SageMaker Random Cut Forest - Nursultan}
-            \input{rcf-sagemaker.tex}
-            \FloatBarrier
-            
-        \subsection{Mean Predictor Algorithm - Marius}
-            \input{mean_predictor.tex}
+ \section{Prediction algorithms}
+ \label{sec:prediction_intro}
+ As presented in the introduction (\ref{sec:use_case2}), the team also compared different approaches of time series forecasting for the purpose of predictive auto-scaling of BMW servers. Whenever an amount of network traffic is predicted that lies above or far below of what the servers are able to handle, further resources shall automatically be allocated or released. In this way, the server costs can be minimized, while still ensuring a seamless experience for the customers. For this purpose, we again used the Mean Predictor (\ref{sec:mean_predictor_predictions}), as well as a Deep Learning algorithm provided by AWS called DeepAR (\ref{ch:deepar}). Additionally, we introduce the Holt-Winter's Method for prediction (\ref{sec:holt-winter}).
+    
+    \subsection{Mean Predictor Model}
+       \input{models/mean_predictor_predictions.tex}
+    \subsection{DeepAR Model}
+        \input{models/deepar.tex}
+    \subsection{Holt-Winter's Method}
+        \input{models/holt-winter.tex}
